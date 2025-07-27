@@ -1,0 +1,226 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>湿度・温度モニター</title>
+    <script src="https://unpkg.com/uplot@1.6.24/dist/uPlot.iife.min.js"></script>
+    <link rel="stylesheet" href="https://unpkg.com/uplot@1.6.24/dist/uPlot.min.css">
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            margin: 20px;
+            background-color: #f5f5f5;
+        }
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            background: white;
+            padding: 20px;
+            border-radius: 8px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+        h1 {
+            text-align: center;
+            color: #333;
+        }
+        .controls {
+            display: flex;
+            gap: 10px;
+            margin-bottom: 20px;
+            justify-content: center;
+        }
+        button {
+            padding: 10px 20px;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 14px;
+        }
+        .start-btn {
+            background-color: #4CAF50;
+            color: white;
+        }
+        .start-btn:hover {
+            background-color: #45a049;
+        }
+        .stop-btn {
+            background-color: #f44336;
+            color: white;
+        }
+        .stop-btn:hover {
+            background-color: #da190b;
+        }
+        .status {
+            text-align: center;
+            margin-bottom: 20px;
+            font-weight: bold;
+        }
+        .running {
+            color: #4CAF50;
+        }
+        .stopped {
+            color: #f44336;
+        }
+        .chart-container {
+            margin: 20px 0;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>湿度・温度リアルタイムモニター</h1>
+        
+        <div class="controls">
+            <button id="startBtn" class="start-btn">開始</button>
+            <button id="stopBtn" class="stop-btn">停止</button>
+            <button id="clearBtn">クリア</button>
+        </div>
+        
+        <div id="status" class="status stopped">停止中</div>
+        
+        <div class="chart-container">
+            <div id="chart"></div>
+        </div>
+    </div>
+
+    <script>
+        let chart;
+        let data = [[], [], []]; // [timestamps, humidity, temperature]
+        let isRunning = false;
+        let intervalId = null;
+        const maxDataPoints = 300; // 5 minutes at 1 second intervals
+
+        // Initialize chart
+        function initChart() {
+            const opts = {
+                title: "湿度・温度データ",
+                width: 1000,
+                height: 400,
+                series: [
+                    {},
+                    {
+                        label: "湿度 (%)",
+                        stroke: "blue",
+                        width: 2,
+                        scale: "humidity"
+                    },
+                    {
+                        label: "温度 (°C)",
+                        stroke: "red",
+                        width: 2,
+                        scale: "temperature"
+                    }
+                ],
+                axes: [
+                    {},
+                    {
+                        scale: "humidity",
+                        side: 1,
+                        label: "湿度 (%)",
+                        stroke: "blue",
+                        grid: {stroke: "rgba(0,0,255,0.1)"}
+                    },
+                    {
+                        scale: "temperature",
+                        side: 3,
+                        label: "温度 (°C)",
+                        stroke: "red",
+                        grid: {stroke: "rgba(255,0,0,0.1)"}
+                    }
+                ],
+                scales: {
+                    x: {
+                        time: true,
+                    },
+                    humidity: {
+                        range: [0, 100]
+                    },
+                    temperature: {
+                        auto: true
+                    }
+                }
+            };
+
+            chart = new uPlot(opts, data, document.getElementById('chart'));
+        }
+
+        // Fetch initial historical data
+        async function loadHistory() {
+            try {
+                const response = await fetch('/api/history');
+                const historyData = await response.json();
+                
+                data[0] = historyData.map(d => d.timestamp / 1000); // Convert to seconds
+                data[1] = historyData.map(d => d.humidity);
+                data[2] = historyData.map(d => d.temperature);
+                
+                chart.setData(data);
+            } catch (error) {
+                console.error('Error loading history:', error);
+            }
+        }
+
+        // Fetch new data point
+        async function fetchData() {
+            try {
+                const response = await fetch('/api/data');
+                const newData = await response.json();
+                
+                // Add new data point
+                data[0].push(newData.timestamp / 1000); // Convert to seconds
+                data[1].push(newData.humidity);
+                data[2].push(newData.temperature);
+                
+                // Keep only last maxDataPoints
+                if (data[0].length > maxDataPoints) {
+                    data[0] = data[0].slice(-maxDataPoints);
+                    data[1] = data[1].slice(-maxDataPoints);
+                    data[2] = data[2].slice(-maxDataPoints);
+                }
+                
+                chart.setData(data);
+            } catch (error) {
+                console.error('Error fetching data:', error);
+            }
+        }
+
+        // Start monitoring
+        function start() {
+            if (!isRunning) {
+                isRunning = true;
+                document.getElementById('status').textContent = '実行中';
+                document.getElementById('status').className = 'status running';
+                intervalId = setInterval(fetchData, 1000); // Fetch every second
+            }
+        }
+
+        // Stop monitoring
+        function stop() {
+            if (isRunning) {
+                isRunning = false;
+                document.getElementById('status').textContent = '停止中';
+                document.getElementById('status').className = 'status stopped';
+                clearInterval(intervalId);
+            }
+        }
+
+        // Clear data
+        function clear() {
+            data = [[], [], []];
+            chart.setData(data);
+        }
+
+        // Event listeners
+        document.getElementById('startBtn').addEventListener('click', start);
+        document.getElementById('stopBtn').addEventListener('click', stop);
+        document.getElementById('clearBtn').addEventListener('click', clear);
+
+        // Initialize on page load
+        window.addEventListener('load', async () => {
+            initChart();
+            await loadHistory();
+        });
+    </script>
+</body>
+</html>
